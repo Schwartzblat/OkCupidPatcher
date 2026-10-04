@@ -1,0 +1,11 @@
+# Installed and verified in this project's .venv: stitch 1.4.3.
+#
+# Do NOT relax this below 1.3.0. ExternalModule's second argument changed
+# meaning between releases (raw smali invoke line -> provider FQN), and the
+# manifest merge, asset injection and module resource table only exist from
+# 1.3.0 onwards. 1.4.x also replaced uber-apk-signer with a bundled
+# `fastsigner` + debug.pem/debug.pk8, so no external signer is needed.
+#
+# The scaffold template shipped `stitch~=1.1.2`, which would DOWNGRADE this
+# venv and break the provider wiring. Changed deliberately.
+stitch~=1.4.3

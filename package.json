@@ -1,0 +1,11 @@
+{
+  "name": "okcupid-patcher-probes",
+  "private": true,
+  "description": "Frida probes that check the hooks are in force. Frida 17 no longer injects Java into the agent runtime, so each probe imports frida-java-bridge and must be compiled before use.",
+  "scripts": {
+    "build": "frida-compile probe-control.js -o probe-control.compiled.js && frida-compile probe-premium.js -o probe-premium.compiled.js && frida-compile probe-blur.js -o probe-blur.compiled.js"
+  },
+  "dependencies": {
+    "frida-java-bridge": "^7.0.13"
+  }
+}

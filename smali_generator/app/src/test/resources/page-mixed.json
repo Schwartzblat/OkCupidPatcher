@@ -1,0 +1,10 @@
+{"data":{"me":{"likesIncomingWithPreviews":{"data":[
+ {"__typename":"MatchPreview",
+  "primaryImage":{"square225":"https://cdn.example.com/photos/1/2/aaa.jpeg?cr=4&h=225"},
+  "primaryImageBlurred":{"square800":"https://cdn.example.com/fuzzyphotos/zzz.jpeg?h=800"}},
+ {"__typename":"Match","user":{"id":"realid0000000000000001",
+  "primaryImage":{"square225":"https://cdn.example.com/photos/3/4/bbb.jpeg?cr=4&h=225"}}},
+ {"__typename":"MatchPreview","primaryImageBlurred":{"square800":null}},
+ {"__typename":"MatchPreview",
+  "primaryImage":{"square225":"https://cdn.example.com/photos/5/6/ccc.jpeg?cr=4&h=225"}}],
+ "pageInfo":{"after":"YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnc=","hasMore":true,"total":110}}}}}

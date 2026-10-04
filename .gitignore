@@ -1,0 +1,46 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# patcher working state
+.patcher-work/
+/temp/
+/artifactory.json
+output*.apk
+output_bundle_apks/
+
+# inputs / outputs
+*.apk
+*.apkm
+*.xapk
+*.jadx
+/keystore.jks
+
+# android module build output
+smali_generator/local.properties
+smali_generator/.gradle/
+smali_generator/build/
+smali_generator/app/build/
+smali_generator/app/release/
+smali_generator/smali_generator.apk
+.idea/
+*.iml
+
+# Frida probe build products
+node_modules/
+*.compiled.js
+
+# SDD / build artifacts kept out of history
+.venv/
+out/
+temp/
+output_bundle_apks/
+smali_generator/smali_generator.apk
+smali_generator/app/build/
+smali_generator/.gradle/
+smali_generator/build/
+.superpowers/
+*.js
+NOTES.md
