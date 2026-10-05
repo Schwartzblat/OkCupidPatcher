@@ -11,7 +11,6 @@ import androidx.annotation.NonNull;
 import com.smali_generator.patches.BlurredCardFlag;
 import com.smali_generator.patches.ShowRealName;
 import com.smali_generator.patches.BlurredUserFlag;
-// import com.smali_generator.patches.IncognitoGate;  // disabled
 import com.smali_generator.patches.LikesCapGate;
 import com.smali_generator.patches.LikesCursorCapture;
 import com.smali_generator.patches.OpenRealProfile;
@@ -49,10 +48,6 @@ public class InitProviderOkCupidPremium extends ContentProvider {
     static Hook[] hooks = {
             // Covers every class carrying the premium predicate, in one hook.
             new PremiumGate(),
-            // Disabled alongside the IncognitoGate finder in main.py -- with the
-            // finder unregistered its three artifactory keys are never written,
-            // and the {{INCOGNITO_GATE_*}} placeholders would FAIL the patch.
-            // new IncognitoGate(),
             new LikesCapGate(),
             new BlurredUserFlag(),
             new BlurredCardFlag(),

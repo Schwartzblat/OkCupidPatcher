@@ -11,7 +11,6 @@ instead of pinning obfuscated names that change every release.
 ## Features
 
 - **Premium unlocked** — every carrier of the A-List entitlement check returns true.
-- **Incognito** enabled.
 - **No likes cap** and **unlimited rewinds**.
 - **Unblurred photos** in *Interested in You* — both the URL that gets loaded
   and the blur the card draws.

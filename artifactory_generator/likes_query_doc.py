@@ -27,7 +27,7 @@ class LikesQueryDoc(SimpleArtifactoryFinder):
 
     def __init__(self, args):
         super().__init__(args)
-        # NOT is_once: see incognito_gate.py -- a removed
+        # NOT is_once: see unlimited_rewinds.py -- a removed
         # is_once finder makes stitch skip the next finder for that file.
         self.is_once = False
         self.is_found = False

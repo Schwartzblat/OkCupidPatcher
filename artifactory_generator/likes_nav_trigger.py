@@ -63,7 +63,7 @@ class LikesNavTrigger(SimpleArtifactoryFinder):
 
     def __init__(self, args):
         super().__init__(args)
-        # NOT is_once: see incognito_gate.py -- a
+        # NOT is_once: see unlimited_rewinds.py -- a
         # fired is_once finder is removed mid-iteration and would make stitch
         # skip whatever is registered right after it for this same file.
         self.is_once = False

@@ -6,7 +6,6 @@ from stitch.common import ExternalModule
 
 # Signature finders live in ./artifactory_generator/ and are registered here.
 from artifactory_generator.premium_gate import PremiumGate
-# from artifactory_generator.incognito_gate import IncognitoGate  # disabled
 from artifactory_generator.likes_cap_gate import LikesCapGate
 from artifactory_generator.blurred_user_flag import BlurredUserFlag
 from artifactory_generator.blurred_card_flag import BlurredCardFlag
@@ -54,18 +53,11 @@ def main():
     ]
     # PremiumGate first on purpose: it is the only finder that scans classes
     # another finder also anchors on, so it goes ahead of anything that could
-    # be removed mid-iteration. Both it and IncognitoGate are is_once=False,
-    # which makes the set immune to stitch's skip bug whatever the order --
-    # see NOTES.md. Do not reorder without re-reading that.
+    # be removed mid-iteration. It is is_once=False, which makes the set immune
+    # to stitch's skip bug whatever the order -- see NOTES.md. Do not reorder
+    # without re-reading that.
     artifactory_list = [
         PremiumGate(args),
-        # Disabled: the incognito toggle is server-enforced, so the client-side
-        # gate buys nothing. Commented out rather than deleted -- re-enabling is
-        # this line plus the import above plus IncognitoGate in
-        # InitProviderOkCupidPremium.java. Safe to drop here: PremiumGate is
-        # is_once=False, so it is never removed mid-iteration and cannot skip
-        # whichever finder now follows it.
-        # IncognitoGate(args),
         LikesCapGate(args),
         BlurredUserFlag(args),
         BlurredCardFlag(args),

@@ -51,7 +51,7 @@ class LikesPayload(SimpleArtifactoryFinder):
         super().__init__(args)
         # NOT is_once: a fired is_once finder is removed from the list
         # mid-iteration, which makes stitch skip the NEXT finder for that same
-        # file (see incognito_gate.py). Never removed means never able to
+        # file (see unlimited_rewinds.py). Never removed means never able to
         # cause that, whatever gets registered after this one.
         self.is_once = False
         self.is_found = False

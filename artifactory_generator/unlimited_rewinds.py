@@ -55,12 +55,12 @@ class UnlimitedRewinds(SimpleArtifactoryFinder):
 
     def __init__(self, args):
         super().__init__(args)
-        # NOT is_once, for the same reason as [IncognitoGate]: a fired is_once
-        # finder is removed from the list mid-iteration, which makes stitch's
-        # loop skip the next finder for that file (see NOTES.md). Never removed
-        # means never able to cause it, whatever the list order. The guard in
-        # extract_artifacts keeps the cost of staying in the list at one
-        # boolean per class.
+        # NOT is_once. This is the canonical statement of why, cited by the
+        # other finders: a fired is_once finder is removed from the list
+        # mid-iteration, which makes stitch's loop skip the next finder for
+        # that file (see NOTES.md). Never removed means never able to cause
+        # it, whatever the list order. The guard in extract_artifacts keeps
+        # the cost of staying in the list at one boolean per class.
         self.is_once = False
         self.is_found = False
 

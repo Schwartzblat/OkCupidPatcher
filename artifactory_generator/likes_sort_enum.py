@@ -29,7 +29,7 @@ class LikesSortEnum(SimpleArtifactoryFinder):
 
     def __init__(self, args):
         super().__init__(args)
-        # NOT is_once: see incognito_gate.py.
+        # NOT is_once: see unlimited_rewinds.py.
         self.is_once = False
         self.is_found = False
 
