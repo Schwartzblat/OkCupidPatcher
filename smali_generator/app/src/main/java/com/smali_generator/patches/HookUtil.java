@@ -75,6 +75,12 @@ final class HookUtil {
             if (ok) {
                 Log.i(TAG, label + ": hooked " + className + "." + methodName + methodSig);
             } else {
+                // From ArtHooks 1.1.0 this is a verified fact, not a guess:
+                // the library reads the entry point back and returns false if
+                // the write did not land. It also now refuses a static target
+                // it cannot move off ART's resolution stub, where 1.0.5
+                // returned true and left a backup that recursed to a
+                // StackOverflowError. A refusal here is the good outcome.
                 Log.e(TAG, label + ": hook_function refused " + className + "."
                         + methodName + methodSig);
             }

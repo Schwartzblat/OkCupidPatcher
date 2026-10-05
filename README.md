@@ -34,6 +34,8 @@ what lets the sweep name every card rather than one in twenty.
 ## Requirements
 
 - Python 3.11+ with `stitch~=1.4.3`
+- ArtHooks 1.1.0 (pulled from JitPack by Gradle; pinned in
+  `smali_generator/gradle/libs.versions.toml`)
 - JDK 17+
 - Android SDK (`$ANDROID_HOME`, or `sdk.dir` in `smali_generator/local.properties`)
 

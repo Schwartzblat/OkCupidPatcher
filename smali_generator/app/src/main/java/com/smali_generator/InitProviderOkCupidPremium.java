@@ -85,6 +85,16 @@ public class InitProviderOkCupidPremium extends ContentProvider {
         // looks identical to a working patch that found nothing.
         if (!com.arthooks.ArtHooks.is_available()) {
             Log.e(TAG, "ArtHooks native library unavailable -- wrong --arch? no hooks will apply");
+        } else if (!com.arthooks.ArtHooks.is_aot_disabled()) {
+            // ArtHooks 1.1.0 stops ART serving dex2oat's output, so that a
+            // method the compiler inlined into its callers still dispatches
+            // through its entry point and can be redirected. When that step
+            // fails, such a hook installs, reports success and never fires --
+            // the same shape of silent failure as a missing library, so it
+            // gets the same check. Reading it here also pins the order: the
+            // is_available() call above has already run the static
+            // initializer that disables AOT, before any hook below.
+            Log.e(TAG, "ArtHooks could not disable AOT code -- hooks on inlined methods may never fire");
         }
         for (Hook hook : hooks) {
             try {
