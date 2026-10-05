@@ -33,12 +33,22 @@ import java.lang.reflect.Method;
 public class UnlimitedRewinds implements Hook {
 
     /**
-     * Backup. Its body is never executed -- ArtHooks rewrites its entry point
-     * to the target's pre-hook body -- and its signature must match
-     * {@link #set_user_tokens_hook} exactly.
+     * Backup. ArtHooks rewrites its entry point to the target's pre-hook body,
+     * and its signature must match {@link #set_user_tokens_hook} exactly.
+     *
+     * <p><b>It must be {@code native} with no body, and that is not a style
+     * choice.</b> Only the entry point is swapped, so every call has to go
+     * through it -- and a backup with a Java body does not: it is empty and
+     * returns nothing, so dex2oat inlines it into the replacement at install
+     * time, long before any of this runs. The call site then holds a copy of
+     * the backup's own (empty) body, the entry-point swap is invisible, and
+     * this hook becomes a silent no-op that still reports success -- rewinds
+     * are never actually set to unlimited. A native method has no body to
+     * copy. ArtHooks refuses a non-native backup outright from 1.0.5; under
+     * 1.0.3 it installed one and said nothing, which is how this went
+     * unnoticed.
      */
-    static void set_user_tokens_backup(Object thiz, Object tokens) {
-    }
+    static native void set_user_tokens_backup(Object thiz, Object tokens);
 
     /**
      * Instance target, so a static replacement with a leading thiz. The
