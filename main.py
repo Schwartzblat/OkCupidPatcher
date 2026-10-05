@@ -23,6 +23,15 @@ from artifactory_generator.deanon_likes import DeanonNavProfileId
 
 PROVIDER_CLASS = 'com.smali_generator.InitProviderOkCupidPremium'
 
+# The subscription check ApkCrawler injects alongside the hooks, as a second
+# ExternalModule. Stitch writes this into the target's manifest as the provider's
+# android:name, and the paywall module generates a class of that name from the
+# PAYWALL_PROVIDER_CLASS artifact. Both are derived from this one constant so
+# they cannot drift: a manifest naming a class that is not in the dex installs
+# fine and dies at launch. Named per app so a shared logcat says which build is
+# talking, the same convention as the Moovit, Mako and WhatsApp patchers.
+PAYWALL_PROVIDER = 'com.paywall.InitProviderPaywallOkCupid'
+
 
 def get_args():
     parser = argparse.ArgumentParser(description='Patch OkCupidPremium with the smali_generator hook module.')
@@ -41,6 +50,8 @@ def get_args():
     parser.add_argument('--extra-artifacts', dest='extra_artifacts',
                         help='Extra artifacts for the artifactory, in the format "key:value"',
                         required=False, default=[], nargs='+')
+    parser.add_argument('--paywall', dest='paywall', help='Path to the paywall module to inject', required=False,
+                        default=None)
     args, _ = parser.parse_known_args()
     return args
 
@@ -51,6 +62,9 @@ def main():
     external_modules = [
         ExternalModule(Path(__file__).parent / './smali_generator', PROVIDER_CLASS)
     ]
+    if args.paywall is not None:
+        extra_artifacts.setdefault('PAYWALL_PROVIDER_CLASS', PAYWALL_PROVIDER.rsplit('.', 1)[1])
+        external_modules.append(ExternalModule(Path(args.paywall), PAYWALL_PROVIDER))
     # PremiumGate first on purpose: it is the only finder that scans classes
     # another finder also anchors on, so it goes ahead of anything that could
     # be removed mid-iteration. It is is_once=False, which makes the set immune

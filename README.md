@@ -68,6 +68,7 @@ Useful flags:
 | `--arch` | ABI whose `libarthooks.so` is injected. Default `arm64-v8a`; use `x86_64` for an emulator or the hooks will not load. |
 | `--no-sign` | Leave the output unsigned. |
 | `-g/--google-api-key` | Replace the app's `google_api_key` resource. |
+| `--paywall` | Path to ApkCrawler's `paywall/` module. Injects the subscription check that androidmod.site's download pipeline depends on: it posts the token the server writes into `assets/paywall.json` to `/api/subscription/is_device_allowed` and kills the process unless the answer is 200. Builds for that site must be produced with this flag **and** `--no-sign`, the way `ApkCrawler/crawler.py` calls every patcher — the server re-signs per user. Without it the server still embeds a token, but nothing reads it: no device limit, and a leaked build cannot be traced. |
 
 ## Layout
 
