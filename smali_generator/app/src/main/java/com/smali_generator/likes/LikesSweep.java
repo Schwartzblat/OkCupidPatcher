@@ -45,6 +45,14 @@ public final class LikesSweep {
 
     /** Safety backstop, not a tuning knob: a full pass over ~120 entries costs about 6 requests. */
     public static final int MAX_REQUESTS_PER_SWEEP = 30;
+
+    /**
+     * How many nameless cards get a targeted seek in one pass. Each costs up
+     * to {@link LikesIdentityResolver#MAX_REQUESTS}, so this bounds the pass;
+     * the ordinary case after a full sweep is a single new like, i.e. one
+     * target resolving in a handful of requests.
+     */
+    public static final int MAX_SEEK_TARGETS_PER_SWEEP = 5;
     public static final long DELAY_MS = 400L;
     public static final int MAX_CONSECUTIVE_FAILURES = 3;
 
@@ -144,6 +152,10 @@ public final class LikesSweep {
                     } catch (Throwable t) {
                         safeLog("LikesSweep: " + t.getClass().getName());
                     } finally {
+                        // Both in a finally: the bar must never be left on
+                        // screen by a sweep that threw, just as the shared
+                        // guard must never be left stuck.
+                        SweepProgress.finish();
                         LikesIdentityResolver.finish();
                     }
                 }
@@ -398,6 +410,7 @@ public final class LikesSweep {
         // previous process already learned, without that file needing any
         // SweepStore-specific lookup of its own.
         primeIdentityStore(store);
+        SweepProgress.start(store);
         Log.w("LikesSweep: starting");
         Result result = sweep(sort, REAL_FETCHER, REAL_SLEEPER, REAL_CLOCK, store);
         // Every card this pass gave an id to -- and any left unnamed by an
@@ -410,12 +423,23 @@ public final class LikesSweep {
         int named = 0;
         if (hasUntriedUnnamed(store)) {
             List<String> sorts = LikesIdentityResolver.configuredSorts();
-            Log.w("LikesSweep: expanding across the other sorts");
-            gained = expandAcrossSorts(sorts, sort, REAL_FETCHER, REAL_SLEEPER, REAL_CLOCK, store);
+            // Aim before sweeping. Seeding the cache from what is already on
+            // disk lets the planner compute the one anchor that puts a target
+            // on a window boundary, which costs a request or two; the blind
+            // expansion below costs hundreds and is now only the fallback.
+            SweepProgress.phase(SweepProgress.Phase.SEEKING);
+            gained = seekUnnamed(store, sorts, sort);
+            if (store.size() > store.countWithId()) {
+                SweepProgress.phase(SweepProgress.Phase.OTHER_SORTS);
+                Log.w("LikesSweep: expanding across the other sorts");
+                gained += expandAcrossSorts(sorts, sort, REAL_FETCHER, REAL_SLEEPER, REAL_CLOCK,
+                        store);
+            }
             if (store.size() > store.countWithId()) {
                 // Second ordering of every sort, this one with the "viewed
                 // you" entries dropped. The primary sort is included: with
                 // views off its ordering is not the one already walked.
+                SweepProgress.phase(SweepProgress.Phase.VIEWS_OFF);
                 Log.w("LikesSweep: expanding again with views excluded");
                 gained += expandAcrossSorts(sorts, null, VIEWS_OFF_FETCHER, REAL_SLEEPER,
                         REAL_CLOCK, store);
@@ -423,20 +447,24 @@ public final class LikesSweep {
             if (store.size() > store.countWithId()) {
                 // Everyone the cross-sort passes named is now an anchor the
                 // swept sort can walk forward from.
+                SweepProgress.phase(SweepProgress.Phase.ANCHORED);
                 Log.w("LikesSweep: expanding from anchors inside the swept sort");
                 gained += expandByAnchoredWalks(sort, REAL_FETCHER, REAL_SLEEPER, REAL_CLOCK, store);
             }
             if (store.size() > store.countWithId()) {
+                SweepProgress.phase(SweepProgress.Phase.ANCHORED_OTHER);
                 Log.w("LikesSweep: expanding from anchors inside the other sorts");
                 gained += expandByAnchoredWalksInOtherSorts(sorts, sort, REAL_FETCHER,
                         REAL_SLEEPER, REAL_CLOCK, store);
             }
+            SweepProgress.phase(SweepProgress.Phase.NAMING);
             named += NameLookup.nameUnnamed(store);
             // Whatever is still nameless has now had a full expansion spent
             // on it; only a card that was not in the list at this point is
             // worth another one.
             rememberUnnamed(store);
         }
+        SweepProgress.phase(SweepProgress.Phase.NAMING);
         named += NameLookup.nameUnnamed(store);
         CardDb.save(ctx, store, legacy);
         for (SweepStore.Record r : store.all()) {
@@ -450,6 +478,67 @@ public final class LikesSweep {
                 + " total in store, " + store.countWithId() + " with an id overall, "
                 + gained + " id(s) from other sorts, "
                 + named + " newly named, " + store.countWithName() + " named overall");
+    }
+
+    /**
+     * Names what it can by aiming at it, rather than by walking every sort
+     * from the start.
+     *
+     * <p>Seeds {@link ObservationCache} with every offset and highlight
+     * {@link SweepStore} already holds, then runs one targeted walk per
+     * target. The seeding is the whole trick: {@link SeekPlanner}'s exact
+     * seek needs an id placed one window before the target, and after a full
+     * sweep the store has one for every card except those inside the first
+     * window -- so most targets resolve in a single request instead of a
+     * full cross-sort expansion.
+     *
+     * <p>A brand-new like is the exception: it sits at offset 0 in
+     * {@code DESC_TIMESTAMP} and nothing is twenty places before it, so it
+     * falls to the planner's attribute-keyed "bring into view" step in
+     * another sort. Still a handful of requests, not hundreds.
+     *
+     * @return how many cards gained an id that did not have one
+     */
+    static int seekUnnamed(SweepStore store, List<String> sorts, String sweptSort) {
+        if (store == null || sorts == null || sorts.isEmpty()) {
+            return 0;
+        }
+        int before = store.countWithId();
+        ObservationCache cache = ObservationCache.get();
+        if (sweptSort != null) {
+            cache.seed(sweptSort, store.all(), WINDOW);
+        }
+        List<String> targets = SeekTargets.pick(store, MAX_SEEK_TARGETS_PER_SWEEP);
+        if (targets.isEmpty()) {
+            return 0;
+        }
+        Log.w("LikesSweep: seeking " + targets.size() + " nameless card(s) by anchor");
+        IdentityStore identities = IdentityStore.get();
+        for (String photoPath : targets) {
+            if (identities.realIdFor(photoPath) != null) {
+                continue;                       // an earlier seek already named it
+            }
+            LikesIdentityResolver.Outcome outcome =
+                    LikesIdentityResolver.seek(photoPath, sorts, cache);
+            if (outcome == LikesIdentityResolver.Outcome.INTERRUPTED) {
+                break;
+            }
+        }
+        // Fold back whatever the walks learned. observeFromOtherSort, not
+        // upsert: these ids came from other sorts' windows and must not move
+        // the position column, which is the swept sort's own frame.
+        long now = REAL_CLOCK.now();
+        for (SweepStore.Record r : store.all()) {
+            if (r.realId == null) {
+                String found = identities.realIdFor(r.photoPath);
+                if (found != null) {
+                    store.observeFromOtherSort(r.photoPath, found, null, now);
+                }
+            }
+        }
+        int gained = store.countWithId() - before;
+        Log.w("LikesSweep: anchored seek named " + gained + " card(s)");
+        return gained;
     }
 
     /** Package-visible for tests: feeds every already-known identity on disk into {@link IdentityStore}. */

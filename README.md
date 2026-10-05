@@ -21,11 +21,16 @@ instead of pinning obfuscated names that change every release.
   background, recovers who each anonymized card is, and stores the result in a
   local SQLite database (`files/likes_cards.db`). It runs incrementally: a
   routine page load costs one request, and a new like triggers another pass.
+- **A progress bar while the sweep runs**, at the top of the app window: how
+  many cards carry a recovered id out of how many are known, plus the stage
+  the pass is in. It tracks ids rather than names, because names are looked up
+  in one pass at the very end -- a bar following them would sit still for the
+  whole walk. Fades out once the pass finishes.
 
-The last four work because each page cursor the server returns is the user id of
-that page's last entry. Anchoring a walk on an id already known moves the window
-onto a different offset, which is what lets the sweep name every card rather
-than one in twenty.
+Unblurred photos, real names, tappable cards and the sweep all work because each
+page cursor the server returns is the user id of that page's last entry. Anchoring
+a walk on an id already known moves the window onto a different offset, which is
+what lets the sweep name every card rather than one in twenty.
 
 ## Requirements
 

@@ -11,11 +11,12 @@ import androidx.annotation.NonNull;
 import com.smali_generator.patches.BlurredCardFlag;
 import com.smali_generator.patches.ShowRealName;
 import com.smali_generator.patches.BlurredUserFlag;
-import com.smali_generator.patches.IncognitoGate;
+// import com.smali_generator.patches.IncognitoGate;  // disabled
 import com.smali_generator.patches.LikesCapGate;
 import com.smali_generator.patches.LikesCursorCapture;
 import com.smali_generator.patches.OpenRealProfile;
 import com.smali_generator.patches.PremiumGate;
+import com.smali_generator.patches.SweepProgressOverlay;
 import com.smali_generator.patches.TransportCapture;
 import com.smali_generator.patches.UnlimitedRewinds;
 
@@ -48,7 +49,10 @@ public class InitProviderOkCupidPremium extends ContentProvider {
     static Hook[] hooks = {
             // Covers every class carrying the premium predicate, in one hook.
             new PremiumGate(),
-            new IncognitoGate(),
+            // Disabled alongside the IncognitoGate finder in main.py -- with the
+            // finder unregistered its three artifactory keys are never written,
+            // and the {{INCOGNITO_GATE_*}} placeholders would FAIL the patch.
+            // new IncognitoGate(),
             new LikesCapGate(),
             new BlurredUserFlag(),
             new BlurredCardFlag(),
@@ -57,6 +61,9 @@ public class InitProviderOkCupidPremium extends ContentProvider {
             new TransportCapture(),
             new LikesCursorCapture(),
             new OpenRealProfile(),
+            // Installs no ArtHooks hook -- only Activity lifecycle callbacks,
+            // which is safe this early, before Application.onCreate.
+            new SweepProgressOverlay(),
     };
 
     static final AtomicBoolean is_loaded = new AtomicBoolean(false);

@@ -187,6 +187,65 @@ public final class ObservationCache {
         return out;
     }
 
+    /**
+     * Places everything {@link SweepStore} already knows into {@code sort},
+     * so a cold process starts with the offsets and attribute keys a previous
+     * run paid for instead of relearning them.
+     *
+     * <p>This is what makes {@link SeekPlanner}'s exact seek fire on the very
+     * first probe: it needs an id placed at {@code target offset - window},
+     * and the store has had one on disk all along.
+     *
+     * <p><b>Stale offsets are safe here.</b> A new like inserts at offset 0 in
+     * {@code DESC_TIMESTAMP} and pushes every other card down by the same
+     * amount, so the anchor and the target drift together and {@code target
+     * offset - window} still names the right card. Only the relative order
+     * matters, and that does not change.
+     *
+     * <p>Never overwrites an entry already absorbed from a real response: a
+     * live observation is current, a stored one merely was.
+     */
+    public synchronized void seed(String sort, java.util.Collection<SweepStore.Record> records,
+                                  int windowLength) {
+        if (sort == null || records == null) {
+            return;
+        }
+        SortTrack track = track(sort);
+        if (windowLength > 0
+                && (track.maxWindowLength == null || windowLength > track.maxWindowLength.intValue())) {
+            track.maxWindowLength = Integer.valueOf(windowLength);
+        }
+        for (SweepStore.Record r : records) {
+            if (r == null || r.photoPath == null
+                    || track.offsetByPhotoPath.containsKey(r.photoPath)) {
+                continue;
+            }
+            Integer offset = Integer.valueOf(r.position);
+            track.offsetByPhotoPath.put(r.photoPath, offset);
+            PageParser.Attributes attributes = seededAttributes(r);
+            if (attributes != null) {
+                track.attributesByPhotoPath.put(r.photoPath, attributes);
+            }
+            // A nameless card is placed too: its own offset is half the exact
+            // seek's arithmetic, even though it contributes no anchor.
+            if (r.realId != null && !IdentityStore.isPlaceholder(r.realId)) {
+                track.offsetById.put(r.realId, offset);
+                track.idByOffset.put(offset, r.realId);
+            }
+        }
+    }
+
+    /** {@link SweepStore} keeps the highlight fields flat; the planner wants them boxed. */
+    private static PageParser.Attributes seededAttributes(SweepStore.Record r) {
+        if (r.age == null && r.matchScore == null && r.isOnline == null
+                && r.isVerified == null && r.locationSummary == null) {
+            return null;
+        }
+        // hasIntroMessage is not carried on disk and no sort keys off it.
+        return new PageParser.Attributes(r.age, r.matchScore, r.isOnline, r.isVerified,
+                null, r.locationSummary);
+    }
+
     private SortTrack track(String sort) {
         SortTrack track = bySort.get(sort);
         if (track == null) {

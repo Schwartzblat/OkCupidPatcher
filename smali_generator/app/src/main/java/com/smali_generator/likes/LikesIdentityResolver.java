@@ -299,6 +299,22 @@ public final class LikesIdentityResolver {
         }
     }
 
+    /**
+     * One targeted walk against the real world, for {@link LikesSweep}.
+     *
+     * <p>Deliberately {@link #walk} and not {@link #resolve}: resolve takes
+     * the {@code RUNNING} guard and spawns a thread, and the sweep already
+     * holds that guard on a thread of its own -- going through resolve would
+     * only ever report BUSY against itself.
+     *
+     * @param cache carries what previous probes placed, so a second target
+     *     benefits from the first one's windows
+     */
+    static Outcome seek(String photoPath, List<String> sorts, ObservationCache cache) {
+        return walk(IdentityStore.get(), cache, photoPath, null, sorts,
+                REAL_FETCHER, REAL_SLEEPER);
+    }
+
     /** Package-visible for tests: the whole traversal policy, with the world injected. */
     static Outcome walk(String photoPath, List<String> seedCursors, List<String> sorts,
                         Fetcher fetcher, Sleeper sleeper) {
