@@ -20,6 +20,9 @@ from artifactory_generator.likes_user_accessors import UserAccessors
 # NOT dead: DeanonNavProfileId is registered below and feeds OpenRealProfile.java.
 # (DeanonPagePayload, the other class in this file, is the unused one.)
 from artifactory_generator.deanon_likes import DeanonNavProfileId
+from artifactory_generator.priority_like_tier import PriorityLikeTier, PriorityLikeModal
+from artifactory_generator.picks_card import PicksCardBase, PicksCardBinders
+from artifactory_generator.picks_vote import PicksVoteService, PicksVoteSource
 
 PROVIDER_CLASS = 'com.smali_generator.InitProviderOkCupidPremium'
 
@@ -99,6 +102,18 @@ def main():
         # OpenRealProfile's substitution must land on this one specifically,
         # never on whatever submitVote reads.
         DeanonNavProfileId(args),
+        # The Priority Like suppression and the Picks like button. All five are
+        # is_once=False, like everything from UnlimitedRewinds down, so none of
+        # them can be removed mid-iteration and make stitch skip the finder
+        # registered after it -- which matters most for the last entries, where
+        # a skip would be silent. Order among themselves is irrelevant: no two
+        # of them anchor on the same class.
+        PriorityLikeTier(args),
+        PriorityLikeModal(args),
+        PicksCardBase(args),
+        PicksCardBinders(args),
+        PicksVoteService(args),
+        PicksVoteSource(args),
     ]
     with Stitch(
             apk_path=args.apk_path,

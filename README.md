@@ -10,8 +10,18 @@ instead of pinning obfuscated names that change every release.
 
 ## Features
 
-- **Premium unlocked** — every carrier of the A-List entitlement check returns true.
+- **Premium unlocked** — every carrier of the A-List entitlement check returns true,
+  with one exception below.
 - **No likes cap** and **unlimited rewinds**.
+- **No Priority Like** — the Premium Plus tier is the one entitlement answered
+  *false*, because Priority Like is not a separate action: it is the ordinary Like
+  re-skinned at six screens, and the server computes the priority from the real
+  subscription. Badging a Like as Priority when it goes out as an ordinary one is
+  worse than not offering it. The Priority Likes sales modal is suppressed with it.
+- **A plain Like on OkCupid Picks**, which the app has never had. A Picks card
+  offers only "open the profile" and a SuperLike that, without tokens, is a rate
+  card. The added button sends the app's own vote through its own batch-vote
+  service, next to the SuperLike FAB, once per person per run.
 - **Unblurred photos** in *Interested in You* — both the URL that gets loaded
   and the blur the card draws.
 - **Real names** on the gated cards, in place of `------`.
@@ -50,7 +60,7 @@ pip install -r requirements.txt
 # 1. build the hook module (isolates Java errors from patching errors)
 (cd smali_generator && ./gradlew assembleRelease)
 
-# 2. unit tests for the pure core -- no device needed
+# 2. unit tests for the pure core (com.smali_generator.likes, .picks) -- no device
 (cd smali_generator && ./gradlew test)
 
 # 3. patch: bundle in, bundle out

@@ -13,7 +13,9 @@ import com.smali_generator.patches.ShowRealName;
 import com.smali_generator.patches.BlurredUserFlag;
 import com.smali_generator.patches.LikesCapGate;
 import com.smali_generator.patches.LikesCursorCapture;
+import com.smali_generator.patches.NoPriorityLikeModal;
 import com.smali_generator.patches.OpenRealProfile;
+import com.smali_generator.patches.PicksLikeButton;
 import com.smali_generator.patches.PremiumGate;
 import com.smali_generator.patches.SweepProgressOverlay;
 import com.smali_generator.patches.TransportCapture;
@@ -48,6 +50,10 @@ public class InitProviderOkCupidPremium extends ContentProvider {
     static Hook[] hooks = {
             // Covers every class carrying the premium predicate, in one hook.
             new PremiumGate(),
+            // The other half of PremiumGate's Priority Like denial: without
+            // this, denying the tier switches the Priority Likes sales modal
+            // back on. Must stay next to it so the pair is never split.
+            new NoPriorityLikeModal(),
             new LikesCapGate(),
             new BlurredUserFlag(),
             new BlurredCardFlag(),
@@ -56,6 +62,10 @@ public class InitProviderOkCupidPremium extends ContentProvider {
             new TransportCapture(),
             new LikesCursorCapture(),
             new OpenRealProfile(),
+            // Adds the plain Like the Cupid's Picks carousel has never had.
+            // Independent of every hook above: its targets are the two Epoxy
+            // card binders, which nothing else here touches.
+            new PicksLikeButton(),
             // Installs no ArtHooks hook -- only Activity lifecycle callbacks,
             // which is safe this early, before Application.onCreate.
             new SweepProgressOverlay(),
