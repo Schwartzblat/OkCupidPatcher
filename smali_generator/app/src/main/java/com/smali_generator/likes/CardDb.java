@@ -169,9 +169,24 @@ final class CardDb {
         return loaded;
     }
 
-    /** Writes the whole store in one transaction. Never throws. */
-    static void save(Context ctx, SweepStore store, File legacyJsonl) {
-        if (store == null) {
+    /**
+     * Writes the given records in one transaction. Never throws.
+     *
+     * <p>Called once per window by {@link SweepStore#flush} with only what
+     * changed, so a pass's progress is durable as it is learned rather than
+     * at the end. A pass over a 123-card list flushes about twenty rows per
+     * window, which is one small transaction -- cheap next to the 400 ms the
+     * sweep already waits between requests.
+     *
+     * <p>The one method here that does <em>not</em> swallow its failure: a
+     * write that did not happen has to be reported, or {@link
+     * SweepStore#flush} would drop those records believing them durable.
+     * {@code flush} is what catches it, re-marks them for the next window's
+     * attempt, and keeps it away from the app.
+     */
+    static void saveChanged(Context ctx, java.util.Collection<SweepStore.Record> records,
+                            File legacyJsonl) {
+        if (records == null || records.isEmpty()) {
             return;
         }
         SQLiteDatabase db = null;
@@ -182,7 +197,7 @@ final class CardDb {
             }
             db.beginTransaction();
             try {
-                for (SweepStore.Record r : store.all()) {
+                for (SweepStore.Record r : records) {
                     ContentValues v = new ContentValues();
                     v.put("photo_path", r.photoPath);
                     putOrNull(v, "user_id", r.realId);
@@ -222,8 +237,6 @@ final class CardDb {
             if (legacyJsonl != null && legacyJsonl.isFile()) {
                 legacyJsonl.delete();
             }
-        } catch (Throwable t) {
-            Log.w("CardDb: could not write the database");
         } finally {
             closeQuietly(db);
         }

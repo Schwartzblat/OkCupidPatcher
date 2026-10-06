@@ -53,6 +53,19 @@ public final class LikesSweep {
      * target resolving in a handful of requests.
      */
     public static final int MAX_SEEK_TARGETS_PER_SWEEP = 5;
+
+    /**
+     * The whole expansion's request budget, shared by every walk it issues.
+     *
+     * <p>A backstop, not a tuning knob: aiming at the missing cards costs
+     * about one request each (a response names exactly one card, so that is
+     * the floor), and a cold start on a 123-card list measured well inside
+     * this. It exists so that a list far larger than any measured, or a
+     * server whose ordering keeps a card out of reach, cannot turn one page
+     * load into an unbounded walk.
+     */
+    public static final int MAX_REQUESTS_PER_EXPANSION = 400;
+
     public static final long DELAY_MS = 400L;
     public static final int MAX_CONSECUTIVE_FAILURES = 3;
 
@@ -63,6 +76,7 @@ public final class LikesSweep {
         END_OF_LIST,        // the server reported no further cursor
         CAP,                // MAX_REQUESTS_PER_SWEEP reached
         FAILURES,           // MAX_CONSECUTIVE_FAILURES bad responses in a row
+        SATISFIED,          // the caller's reason for walking is answered
         INTERRUPTED,
         NOT_READY,          // no sort to walk, or no transport yet
     }
@@ -227,12 +241,117 @@ public final class LikesSweep {
         }
         int before = store.countWithId();
         for (String other : sorts) {
+            if (fullyIdentified(store)) {
+                break;              // nothing left for a boundary to reveal
+            }
             if (other == null || (primarySort != null && other.equalsIgnoreCase(primarySort))) {
                 continue;
             }
-            sweep(other, fetcher, sleeper, clock, store, false, false);
+            // Stops the moment this walk completes coverage, instead of
+            // reading the rest of the list to learn nothing.
+            sweep(other, fetcher, sleeper, clock, store, false, false, null, 0, null,
+                    UNTIL_COMPLETE, MAX_REQUESTS_PER_SWEEP);
         }
         return store.countWithId() - before;
+    }
+
+    /** True once every card in the store carries an id. */
+    static boolean fullyIdentified(SweepStore store) {
+        return store.size() > 0 && store.countWithId() >= store.size();
+    }
+
+    private static final Continuation UNTIL_COMPLETE = new Continuation() {
+        @Override public boolean more(SweepStore store) {
+            return !fullyIdentified(store);
+        }
+    };
+
+    /** The cards with no id yet, nearest the top of the swept sort first. */
+    static List<String> unnamedPaths(SweepStore store) {
+        List<SweepStore.Record> unnamed = new java.util.ArrayList<SweepStore.Record>();
+        for (SweepStore.Record r : store.all()) {
+            if (r != null && r.photoPath != null && r.realId == null) {
+                unnamed.add(r);
+            }
+        }
+        java.util.Collections.sort(unnamed, new java.util.Comparator<SweepStore.Record>() {
+            @Override public int compare(SweepStore.Record a, SweepStore.Record b) {
+                if (a.position != b.position) {
+                    return a.position < b.position ? -1 : 1;
+                }
+                return a.photoPath.compareTo(b.photoPath);
+            }
+        });
+        List<String> paths = new java.util.ArrayList<String>(unnamed.size());
+        for (SweepStore.Record r : unnamed) {
+            paths.add(r.photoPath);
+        }
+        return paths;
+    }
+
+    /**
+     * The whole expansion, in cost order: aim first, walk blindly only if
+     * aiming could not finish the job.
+     *
+     * <p>The order is the fix for what made a pass slow. Aiming at the cards
+     * that are actually missing costs about one request each ({@link
+     * TargetedResolve}); walking a sort from page 1 costs a request per window
+     * whatever is missing, so it only pays while most of the list is unknown.
+     * The old ladder ran the blind walks first and unconditionally, so one new
+     * like cost 364 requests instead of the half-dozen the aim needs.
+     *
+     * @param viewsOn the ordinary fetcher
+     * @param viewsOff the same query with {@code includeViews: false}, a
+     *     second ordering of every sort for the cold-start case
+     * @return how many cards gained an id
+     */
+    static int expand(String primarySort, List<String> sorts, Fetcher viewsOn, Fetcher viewsOff,
+                      Sleeper sleeper, Clock clock, SweepStore store) {
+        int before = store.countWithId();
+
+        // 1. The swept sort alone, whose offsets are already on disk. This is
+        //    the whole job for any card deep in the list.
+        SweepProgress.phase(SweepProgress.Phase.AIMING);
+        expandByAnchoredWalks(primarySort, viewsOn, sleeper, clock, store);
+
+        // 2. Every other order, for the cards the swept sort cannot reach --
+        //    above all a brand-new like, which sits at offset 0 there.
+        if (!fullyIdentified(store)) {
+            expandByAnchoredWalksInOtherSorts(sorts, primarySort, viewsOn, sleeper, clock, store);
+        }
+
+        // 3. Only now the blind walks. On a cold start they are what gives
+        //    each residue its first anchor; afterwards they are never reached.
+        if (!fullyIdentified(store)) {
+            Log.w("LikesSweep: aiming did not finish -- walking the other sorts");
+            SweepProgress.phase(SweepProgress.Phase.OTHER_SORTS);
+            expandAcrossSorts(sorts, primarySort, viewsOn, sleeper, clock, store);
+        }
+        if (!fullyIdentified(store) && viewsOff != null) {
+            SweepProgress.phase(SweepProgress.Phase.VIEWS_OFF);
+            expandAcrossSorts(sorts, null, viewsOff, sleeper, clock, store);
+        }
+
+        // 4. With those seeds in hand, aim again at whatever is left.
+        if (!fullyIdentified(store)) {
+            SweepProgress.phase(SweepProgress.Phase.AIMING);
+            expandByAnchoredWalksInOtherSorts(sorts, primarySort, viewsOn, sleeper, clock, store);
+        }
+        return store.countWithId() - before;
+    }
+
+    private static void aim(SweepStore store, String primarySort, List<String> sorts,
+                            Fetcher fetcher, Sleeper sleeper, Clock clock) {
+        List<String> targets = unnamedPaths(store);
+        if (targets.isEmpty()) {
+            return;
+        }
+        TargetedResolve.Result r = TargetedResolve.resolve(targets, store, primarySort, sorts,
+                fetcher, sleeper, clock, MAX_REQUESTS_PER_EXPANSION);
+        if (r.requests > 0) {
+            Log.w("LikesSweep: aimed " + r.requests + " request(s), named " + r.named
+                    + " of " + targets.size() + " target(s)");
+        }
     }
 
     /**
@@ -249,106 +368,62 @@ public final class LikesSweep {
     }
 
     /**
-     * Names the people no walk from the start of the list can reach, by
-     * restarting the walk from someone already known.
+     * Checked once per window, after it has been recorded: false ends the
+     * walk with {@link StopReason#SATISFIED}.
      *
-     * <p>One walk per residue class, from the earliest known anchor in each:
-     * that anchor's walk names everyone sharing its residue from its own
-     * offset onward, so a second anchor in the same class would only repeat
-     * it. People at an offset below every known anchor of their class stay
-     * out of reach -- there is nothing twenty places before them to anchor
-     * on -- which is why the cross-sort passes run first.
+     * <p>Every walk used to run to the end of the list, which is why a pass
+     * kept spending requests after it had learned everything it set out to --
+     * 69 of 364 on the measured one-new-like case. A walk issued for a reason
+     * now carries that reason and stops when it is answered.
+     */
+    interface Continuation {
+        boolean more(SweepStore store);
+    }
+
+    /**
+     * Names the cards no walk from the start of the swept sort can reach, by
+     * aiming a walk at each one from the nearest already-known person in its
+     * own residue.
+     *
+     * <p>This used to bucket every *known* id by residue and walk one per
+     * bucket to the end of the list, which asked the wrong question: it spent
+     * requests wherever an anchor happened to exist rather than wherever a
+     * card was actually missing. Measured on a 123-card list with one card
+     * missing at offset 0, it cost 121 requests and could not have named it
+     * at all -- nothing is twenty places before offset 0. {@link
+     * TargetedResolve} starts from the missing cards instead, so a residue
+     * with nothing to find costs nothing.
      *
      * @return how many cards gained an id that did not have one.
      */
     static int expandByAnchoredWalks(String sort, Fetcher fetcher, Sleeper sleeper, Clock clock,
                                      SweepStore store) {
-        if (!Cursors.canMint()) {
-            return 0;
-        }
         int before = store.countWithId();
-        java.util.Map<Integer, SweepStore.Record> earliest =
-                new java.util.TreeMap<Integer, SweepStore.Record>();
-        for (SweepStore.Record r : store.all()) {
-            if (r.realId == null) {
-                continue;
-            }
-            Integer residue = Integer.valueOf(((r.position % WINDOW) + WINDOW) % WINDOW);
-            SweepStore.Record held = earliest.get(residue);
-            if (held == null || r.position < held.position) {
-                earliest.put(residue, r);
-            }
-        }
-        for (SweepStore.Record anchor : earliest.values()) {
-            String cursor = Cursors.encode(anchor.realId);
-            if (cursor == null) {
-                continue;
-            }
-            sweep(sort, fetcher, sleeper, clock, store, true, false, cursor, anchor.position + 1);
-        }
+        aim(store, sort, sort == null
+                ? java.util.Collections.<String>emptyList()
+                : java.util.Collections.singletonList(sort), fetcher, sleeper, clock);
         return store.countWithId() - before;
     }
 
     /**
-     * The last of the unnamed: people sitting too early in the swept sort for
-     * any anchor to reach -- nothing is twenty places before them -- but not
-     * necessarily early in some other sort.
+     * The same aim, allowed to use every other order as well -- which is what
+     * a card inside the swept sort's first window needs, since nothing there
+     * can be anchored on.
      *
-     * <p>For each other sort: walk it once to learn where everyone sits in
-     * <em>its</em> order (reported, never stored -- only one ordering fits in
-     * the position column), then run one anchored walk per residue of that
-     * order. Stops as soon as every card has an id, so the common case costs
-     * one sort rather than all of them.
+     * <p>Where this used to walk each other sort from page 1 purely to learn
+     * offsets (9 sorts x 7 requests, on top of the two passes that had already
+     * fetched those same pages) and then walk one anchor per residue of each,
+     * {@link TargetedResolve} walks a sort only until the window holding the
+     * target appears, and only for as long as targets remain. Measured: 383
+     * requests for 16 ids, before.
      *
      * @return how many cards gained an id that did not have one.
      */
     static int expandByAnchoredWalksInOtherSorts(List<String> sorts, String primarySort,
                                                  Fetcher fetcher, Sleeper sleeper, Clock clock,
                                                  SweepStore store) {
-        if (sorts == null || !Cursors.canMint()) {
-            return 0;
-        }
         int before = store.countWithId();
-        for (String other : sorts) {
-            if (other == null || (primarySort != null && other.equalsIgnoreCase(primarySort))) {
-                continue;
-            }
-            if (store.countWithId() >= store.size()) {
-                break;                          // everyone is named; nothing left to buy
-            }
-            final java.util.Map<String, Integer> offsets = new java.util.HashMap<String, Integer>();
-            sweep(other, fetcher, sleeper, clock, store, false, false, null, 0,
-                    new PositionSink() {
-                        @Override public void at(String photoPath, int position) {
-                            offsets.put(photoPath, Integer.valueOf(position));
-                        }
-                    });
-
-            java.util.Map<Integer, SweepStore.Record> earliest =
-                    new java.util.TreeMap<Integer, SweepStore.Record>();
-            java.util.Map<SweepStore.Record, Integer> anchorOffset =
-                    new java.util.HashMap<SweepStore.Record, Integer>();
-            for (SweepStore.Record r : store.all()) {
-                Integer offset = r.realId == null ? null : offsets.get(r.photoPath);
-                if (offset == null) {
-                    continue;
-                }
-                Integer residue = Integer.valueOf(offset.intValue() % WINDOW);
-                SweepStore.Record held = earliest.get(residue);
-                if (held == null || offset.intValue() < anchorOffset.get(held).intValue()) {
-                    earliest.put(residue, r);
-                    anchorOffset.put(r, offset);
-                }
-            }
-            for (SweepStore.Record anchor : earliest.values()) {
-                String cursor = Cursors.encode(anchor.realId);
-                if (cursor == null) {
-                    continue;
-                }
-                sweep(other, fetcher, sleeper, clock, store, false, false, cursor,
-                        anchorOffset.get(anchor).intValue() + 1);
-            }
-        }
+        aim(store, primarySort, sorts, fetcher, sleeper, clock);
         return store.countWithId() - before;
     }
 
@@ -403,6 +478,12 @@ public final class LikesSweep {
         }
         File legacy = storeFile();
         SweepStore store = CardDb.load(ctx, legacy);
+        // From here on every window this pass records is durable before the
+        // next request goes out. A pass can run for a minute in the
+        // background and the process can die at any point in it; writing
+        // only at the end meant a pass that did not reach the end
+        // contributed nothing, and the next one re-learned the same ids.
+        installPersister(ctx, store, legacy);
         // Prime the in-memory, per-process IdentityStore with every identity
         // already on disk -- not only the ones this pass's own window
         // happens to revisit -- so the tap-driven fallback in OpenRealProfile
@@ -413,49 +494,20 @@ public final class LikesSweep {
         SweepProgress.start(store);
         Log.w("LikesSweep: starting");
         Result result = sweep(sort, REAL_FETCHER, REAL_SLEEPER, REAL_CLOCK, store);
-        // Every card this pass gave an id to -- and any left unnamed by an
-        // earlier pass -- gets its name looked up before the store is
-        // written, so a card is never left half-resolved on disk.
-        // Cards the swept sort can never name on its own -- every offset that
-        // is not a window boundary. Other sorts put different people on those
-        // boundaries, so they are worth one pass per process.
+
         int gained = 0;
         int named = 0;
         if (hasUntriedUnnamed(store)) {
             List<String> sorts = LikesIdentityResolver.configuredSorts();
-            // Aim before sweeping. Seeding the cache from what is already on
-            // disk lets the planner compute the one anchor that puts a target
-            // on a window boundary, which costs a request or two; the blind
-            // expansion below costs hundreds and is now only the fallback.
-            SweepProgress.phase(SweepProgress.Phase.SEEKING);
-            gained = seekUnnamed(store, sorts, sort);
-            if (store.size() > store.countWithId()) {
-                SweepProgress.phase(SweepProgress.Phase.OTHER_SORTS);
-                Log.w("LikesSweep: expanding across the other sorts");
-                gained += expandAcrossSorts(sorts, sort, REAL_FETCHER, REAL_SLEEPER, REAL_CLOCK,
-                        store);
-            }
-            if (store.size() > store.countWithId()) {
-                // Second ordering of every sort, this one with the "viewed
-                // you" entries dropped. The primary sort is included: with
-                // views off its ordering is not the one already walked.
-                SweepProgress.phase(SweepProgress.Phase.VIEWS_OFF);
-                Log.w("LikesSweep: expanding again with views excluded");
-                gained += expandAcrossSorts(sorts, null, VIEWS_OFF_FETCHER, REAL_SLEEPER,
-                        REAL_CLOCK, store);
-            }
-            if (store.size() > store.countWithId()) {
-                // Everyone the cross-sort passes named is now an anchor the
-                // swept sort can walk forward from.
-                SweepProgress.phase(SweepProgress.Phase.ANCHORED);
-                Log.w("LikesSweep: expanding from anchors inside the swept sort");
-                gained += expandByAnchoredWalks(sort, REAL_FETCHER, REAL_SLEEPER, REAL_CLOCK, store);
-            }
-            if (store.size() > store.countWithId()) {
-                SweepProgress.phase(SweepProgress.Phase.ANCHORED_OTHER);
-                Log.w("LikesSweep: expanding from anchors inside the other sorts");
-                gained += expandByAnchoredWalksInOtherSorts(sorts, sort, REAL_FETCHER,
-                        REAL_SLEEPER, REAL_CLOCK, store);
+            // Aim at the cards that are missing, in cost order; see expand().
+            gained = expand(sort, sorts, REAL_FETCHER, VIEWS_OFF_FETCHER, REAL_SLEEPER,
+                    REAL_CLOCK, store);
+            if (!fullyIdentified(store)) {
+                // Last resort: the tap resolver's own blind frontier, for a
+                // card no ordering managed to put twenty places after a
+                // known one. Bounded by MAX_SEEK_TARGETS_PER_SWEEP.
+                SweepProgress.phase(SweepProgress.Phase.SEEKING);
+                gained += seekUnnamed(store, sorts, sort);
             }
             SweepProgress.phase(SweepProgress.Phase.NAMING);
             named += NameLookup.nameUnnamed(store);
@@ -466,18 +518,38 @@ public final class LikesSweep {
         }
         SweepProgress.phase(SweepProgress.Phase.NAMING);
         named += NameLookup.nameUnnamed(store);
-        CardDb.save(ctx, store, legacy);
+        store.flush();                  // anything the naming pass just learned
         for (SweepStore.Record r : store.all()) {
             if (r.displayName != null) {
                 IdentityStore.get().rememberName(r.photoPath, r.displayName);
             }
         }
+        if (named > 0) {
+            invalidatePrimedNames();    // let the next page load pick them up
+        }
         Log.w("LikesSweep: finished (" + result.reason + "), " + result.requests
                 + " request(s), " + result.entriesSeen + " entr(ies) seen, "
                 + result.entriesWithId + " with an id, " + store.size()
                 + " total in store, " + store.countWithId() + " with an id overall, "
-                + gained + " id(s) from other sorts, "
+                + gained + " id(s) from the expansion, "
                 + named + " newly named, " + store.countWithName() + " named overall");
+    }
+
+    /**
+     * Points the store at the database, so {@link SweepStore#flush} writes
+     * through to it.
+     *
+     * <p>Only the records that changed since the last flush are written, so a
+     * flush per window is one small transaction rather than a rewrite of the
+     * whole table.
+     */
+    private static void installPersister(final android.content.Context ctx, SweepStore store,
+                                         final File legacy) {
+        store.setPersister(new SweepStore.Persister() {
+            @Override public void persist(java.util.Collection<SweepStore.Record> changed) {
+                CardDb.saveChanged(ctx, changed, legacy);
+            }
+        });
     }
 
     /**
@@ -655,6 +727,23 @@ public final class LikesSweep {
     static Result sweep(String sort, Fetcher fetcher, Sleeper sleeper, Clock clock, SweepStore store,
                         boolean recordPositions, boolean stopOnKnown,
                         String startCursor, int startPosition, PositionSink sink) {
+        return sweep(sort, fetcher, sleeper, clock, store, recordPositions, stopOnKnown,
+                startCursor, startPosition, sink, null, MAX_REQUESTS_PER_SWEEP);
+    }
+
+    /**
+     * As above, stopping as soon as {@code continuation} says the walk's
+     * reason is answered, and within {@code maxRequests} rather than the
+     * per-sweep backstop.
+     *
+     * <p>{@code maxRequests} is how a caller spreads one budget over several
+     * walks: {@link TargetedResolve} issues a walk per target and must bound
+     * the whole pass, not each walk separately.
+     */
+    static Result sweep(String sort, Fetcher fetcher, Sleeper sleeper, Clock clock, SweepStore store,
+                        boolean recordPositions, boolean stopOnKnown,
+                        String startCursor, int startPosition, PositionSink sink,
+                        Continuation continuation, int maxRequests) {
         int requests = 0;
         int entriesSeen = 0;
         int entriesWithId = 0;
@@ -663,7 +752,7 @@ public final class LikesSweep {
         int position = startPosition;
 
         while (true) {
-            if (requests >= MAX_REQUESTS_PER_SWEEP) {
+            if (requests >= maxRequests) {
                 return new Result(StopReason.CAP, requests, entriesSeen, entriesWithId);
             }
 
@@ -680,6 +769,12 @@ public final class LikesSweep {
                 continue;        // same cursor, worth one retry
             }
             consecutiveFailures = 0;
+            // Before any stop check: a steady-state pass stops on its first
+            // window, and every aimed strategy refuses itself until a real
+            // cursor has confirmed our encoder reproduces the server's form.
+            // Verifying this only on a window the walk continued past left
+            // the whole expansion blind on exactly the common case.
+            Cursors.observeServerCursor(page.after);
 
             // The same pure decision LikesCursorCapture and the tap resolver
             // use: the cursor names the page's actual final entry, skipped
@@ -712,6 +807,14 @@ public final class LikesSweep {
                 }
             }
 
+            // This window is durable before the next request goes out, so a
+            // pass the process does not survive still contributes everything
+            // up to its last completed window.
+            store.flush();
+
+            if (continuation != null && !continuation.more(store)) {
+                return new Result(StopReason.SATISFIED, requests, entriesSeen, entriesWithId);
+            }
             if (stopOnKnown && !page.entries.isEmpty() && !sawNewEntry) {
                 return new Result(StopReason.REACHED_KNOWN, requests, entriesSeen, entriesWithId);
             }
@@ -727,7 +830,6 @@ public final class LikesSweep {
             // trusting it. An unrecognised cursor is not an error -- the
             // connection silently returns page 1 -- so without this the sweep
             // re-reads the same window and reports progress it did not make.
-            Cursors.observeServerCursor(page.after);
             String decodedId = Cursors.decode(page.after);
             String mintedCursor = (decodedId == null || !Cursors.canMint())
                     ? null : Cursors.encode(decodedId);

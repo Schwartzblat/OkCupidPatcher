@@ -29,7 +29,15 @@ instead of pinning obfuscated names that change every release.
 - **Automatic identity sweep** — walks the whole *Interested in You* list in the
   background, recovers who each anonymized card is, and stores the result in a
   local SQLite database (`files/likes_cards.db`). It runs incrementally: a
-  routine page load costs one request, and a new like triggers another pass.
+  routine page load costs one request, and a new like costs a handful more.
+  Because a response can only ever name one card — the one its page cursor
+  points at — the sweep aims a window boundary at each card that is still
+  anonymous instead of re-walking every sort order hoping to land on one. On
+  device: a new like is named in ~13 requests, and a sweep from an empty
+  database identifies and names 123 cards in about three minutes.
+- **Progress is written as it is learned**, once per window and once per
+  recovered name, so a background pass the process does not survive still
+  contributes everything it had reached; the next pass resumes from there.
 - **A progress bar while the sweep runs**, at the top of the app window: how
   many cards carry a recovered id out of how many are known, plus the stage
   the pass is in. It tracks ids rather than names, because names are looked up

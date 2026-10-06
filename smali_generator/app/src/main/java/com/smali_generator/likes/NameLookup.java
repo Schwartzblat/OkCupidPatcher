@@ -97,6 +97,10 @@ final class NameLookup {
             NameResolver.Resolved resolved = NameResolver.parse(body);
             if (NameResolver.belongsTo(resolved, record.photoPath)) {
                 store.rememberName(record.photoPath, resolved.displayName, System.currentTimeMillis());
+                // One row, written now: naming a full list takes half a
+                // minute of requests, and a process killed partway through
+                // should keep the names it already paid for.
+                store.flush();
                 named++;
             } else if (resolved != null) {
                 unverified++;

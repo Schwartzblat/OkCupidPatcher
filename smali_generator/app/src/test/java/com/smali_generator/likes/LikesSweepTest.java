@@ -450,10 +450,19 @@ public class LikesSweepTest {
         assertEquals("realid0000000000000006", store.get(c6).realId);
     }
 
-    @Test public void oneAnchoredWalkPerResidueStartingFromTheEarliestKnown() {
+    /**
+     * An anchored walk is aimed at a card that is actually missing, not fired
+     * at every residue that happens to own an anchor.
+     *
+     * <p>The one unnamed card here sits at position 50, residue 10, and
+     * nothing is known at 30 or 10 -- so no walk in this sort can put a
+     * boundary on it, and the right number of requests is zero. The earlier
+     * strategy bucketed the *known* ids by residue instead and started a walk
+     * from the earliest of each, which spent two walks here and 121 requests
+     * on the measured 123-card list, naming nothing either time.
+     */
+    @Test public void anchoredWalksAreAimedAtMissingCardsNotAtEveryAnchoredResidue() {
         SweepStore store = new SweepStore();
-        // Two anchors share residue 19; the later one must not start a walk
-        // of its own, because the earlier one's walk already covers it.
         store.upsert("/photos/1/1/a19.jpeg", "realid0000000000000019", null, 19, 1L);
         store.upsert("/photos/1/1/a39.jpeg", "realid0000000000000039", null, 39, 1L);
         store.upsert("/photos/1/1/a07.jpeg", "realid0000000000000007", null, 7, 1L);
@@ -463,16 +472,68 @@ public class LikesSweepTest {
         LikesSweep.Fetcher recording = new LikesSweep.Fetcher() {
             @Override public String fetch(String sort, String cursor) {
                 startedFrom.add(cursor);
-                return page("", null);          // end immediately; we are counting starts
+                return page("", null);
             }
         };
 
         LikesSweep.expandByAnchoredWalks(SORT, recording, NO_SLEEP, FIXED_CLOCK, store);
 
-        assertEquals(2, startedFrom.size());
-        assertTrue(startedFrom.contains(Cursors.encode("realid0000000000000019")));
-        assertTrue(startedFrom.contains(Cursors.encode("realid0000000000000007")));
-        assertFalse(startedFrom.contains(Cursors.encode("realid0000000000000039")));
+        assertTrue("walked without a reachable target: " + startedFrom, startedFrom.isEmpty());
+    }
+
+    /**
+     * Nearest anchor, not earliest: both 7 and 27 share the target's residue,
+     * and starting from 27 reaches it in one window where starting from 7
+     * would spend two.
+     */
+    @Test public void anchoredWalkStartsFromTheNearestAnchorInTheTargetsResidue() {
+        SweepStore store = new SweepStore();
+        store.upsert("/photos/1/1/a07.jpeg", "realid0000000000000007", null, 7, 1L);
+        store.upsert("/photos/1/1/a27.jpeg", "realid0000000000000027", null, 27, 1L);
+        store.upsert("/photos/1/1/plain.jpeg", null, null, 47, 1L);
+
+        final List<String> startedFrom = new ArrayList<String>();
+        LikesSweep.Fetcher recording = new LikesSweep.Fetcher() {
+            @Override public String fetch(String sort, String cursor) {
+                startedFrom.add(cursor);
+                return page("", null);
+            }
+        };
+
+        LikesSweep.expandByAnchoredWalks(SORT, recording, NO_SLEEP, FIXED_CLOCK, store);
+
+        assertEquals(1, startedFrom.size());
+        assertEquals(Cursors.encode("realid0000000000000027"), startedFrom.get(0));
+    }
+
+    /**
+     * Minting has to be verified from the very first window, not only from a
+     * window the walk happens to continue past.
+     *
+     * <p>A steady-state pass stops on its first window with {@code
+     * REACHED_KNOWN}, and that return used to come before the cursor was ever
+     * compared against our own encoder -- so {@link Cursors#canMint} was
+     * still false when the expansion ran, every aimed strategy refused
+     * itself, and the pass fell through to the blind walks it exists to
+     * avoid. Seen on device: "aiming did not finish" logged 0.6 s into a
+     * pass, with "minting verified" arriving only afterwards.
+     */
+    @Test public void mintingIsVerifiedFromAWindowTheWalkStopsOn() {
+        Cursors.resetMintVerification();
+        String boundaryId = "boundaryid00000000000001";
+        String boundaryCursor = Cursors.encode(boundaryId);
+
+        ScriptedFetcher fetcher = new ScriptedFetcher();
+        fetcher.byCursor.put(null, page(join(gated("/photos/a.jpeg")), boundaryCursor));
+
+        SweepStore store = new SweepStore();
+        store.upsert("/photos/a.jpeg", null, null, 0, 1L);     // already known -> stops at once
+
+        LikesSweep.Result result = LikesSweep.sweep(SORT, fetcher, NO_SLEEP, FIXED_CLOCK, store);
+
+        assertEquals(LikesSweep.StopReason.REACHED_KNOWN, result.reason);
+        assertTrue("a pass that stops on a known window still saw a real cursor",
+                Cursors.canMint());
     }
 
     @Test public void anchoredWalksAreRefusedWhileMintingIsUnverified() {

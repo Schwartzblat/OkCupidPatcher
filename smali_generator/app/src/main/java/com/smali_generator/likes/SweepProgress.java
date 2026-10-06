@@ -32,11 +32,12 @@ public final class SweepProgress {
     /** The stages of a pass, in the order {@code runDeviceSweep} performs them. */
     public enum Phase {
         WALKING("Identifying…"),
-        SEEKING("Finding new cards…"),
+        /** Aiming a window boundary at each card that has no id yet. */
+        AIMING("Finding new cards…"),
         OTHER_SORTS("Checking other orders…"),
         VIEWS_OFF("Checking without views…"),
-        ANCHORED("Checking from anchors…"),
-        ANCHORED_OTHER("Anchors in other orders…"),
+        /** The last resort, reached only when aiming could not place a card. */
+        SEEKING("Searching…"),
         NAMING("Looking up names…"),
         /** The pass is over; the caption reads as a result, not an activity. */
         DONE("Done");

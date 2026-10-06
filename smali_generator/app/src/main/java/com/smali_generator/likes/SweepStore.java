@@ -118,7 +118,76 @@ public final class SweepStore {
 
     private final Map<String, Record> byPhotoPath = new LinkedHashMap<String, Record>();
 
+    /**
+     * The durable half, installed by the device shell ({@link CardDb}).
+     *
+     * <p>Kept behind an interface for the same reason {@link Log.Sink} is:
+     * this class stays free of Android so the merge policy unit-tests on the
+     * JVM.
+     */
+    public interface Persister {
+        /** @param changed only the records that changed since the last flush */
+        void persist(Collection<Record> changed);
+    }
+
+    private Persister persister;
+    /** Photo paths changed since the last successful flush, in change order. */
+    private final java.util.LinkedHashSet<String> unflushed = new java.util.LinkedHashSet<String>();
+
     public SweepStore() {
+    }
+
+    public synchronized void setPersister(Persister p) {
+        this.persister = p;
+    }
+
+    /**
+     * Writes everything learned since the last flush, and nothing else.
+     *
+     * <p>Called once per window by {@link LikesSweep#sweep}, so a pass that
+     * the process does not survive still contributes every window it
+     * completed. Before this existed the whole pass was written once at the
+     * end, which meant a four-minute background walk killed at its last
+     * request contributed nothing at all and the next pass started over.
+     *
+     * <p>Never throws, and never loses a change: the persister runs outside
+     * this object's lock (a database write must not block the main thread
+     * reading counts for the progress bar), and a write that fails leaves its
+     * records marked so the next flush carries them again.
+     */
+    public void flush() {
+        Persister target;
+        java.util.List<Record> changed = new ArrayList<Record>();
+        java.util.List<String> paths;
+        synchronized (this) {
+            target = persister;
+            if (target == null || unflushed.isEmpty()) {
+                return;
+            }
+            paths = new ArrayList<String>(unflushed);
+            unflushed.clear();
+            for (String path : paths) {
+                Record record = byPhotoPath.get(path);
+                if (record != null) {
+                    changed.add(record);
+                }
+            }
+        }
+        try {
+            target.persist(changed);
+        } catch (Throwable t) {
+            synchronized (this) {
+                // Re-mark rather than restore: a change made while the write
+                // was in flight must survive this.
+                unflushed.addAll(paths);
+            }
+            Log.w("SweepStore: flush failed -- " + t.getClass().getSimpleName());
+        }
+    }
+
+    /** Package-visible for tests: how much is waiting to be written. */
+    synchronized int unflushedCount() {
+        return unflushed.size();
     }
 
     /**
@@ -245,6 +314,7 @@ public final class SweepStore {
 
         byPhotoPath.put(photoPath, new Record(photoPath, mergedId, age, matchScore, isOnline, isVerified,
                 locationSummary, position, firstSeenMs, nowMs, displayName, nameSeenMs));
+        unflushed.add(photoPath);
     }
 
     /**
@@ -267,6 +337,7 @@ public final class SweepStore {
         byPhotoPath.put(photoPath, new Record(e.photoPath, e.realId, e.age, e.matchScore, e.isOnline,
                 e.isVerified, e.locationSummary, e.position, e.firstSeenMs, e.lastSeenMs,
                 displayName, nowMs));
+        unflushed.add(photoPath);
     }
 
     /** Cards that carry a recovered id but have not been named yet -- the lookup queue. */
